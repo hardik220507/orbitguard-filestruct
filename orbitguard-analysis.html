@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OrbitGuard — Codebase Analysis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#05070a;
+    --panel:#0a0e13;
+    --panel-2:#0e131a;
+    --line:#1a222b;
+    --line-soft:#131920;
+    --text:#eef3f7;
+    --text-dim:#8a97a6;
+    --text-faint:#4d5865;
+    --accent:#6ff0c4;
+    --accent-dim:rgba(111,240,196,.12);
+    --accent-glow:rgba(111,240,196,.35);
+    --risk-low:#34d399;
+    --risk-moderate:#fbbf24;
+    --risk-high:#fb923c;
+    --risk-critical:#fb4570;
+    --sans: 'Inter', system-ui, sans-serif;
+    --display: 'Space Grotesk', var(--sans);
+    --mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html{ scroll-behavior:smooth; }
+
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    line-height:1.6;
+    overflow-x:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; scroll-behavior:auto !important; }
+  }
+
+  ::selection{ background:var(--accent-dim); color:var(--accent); }
+
+  a{ color:inherit; }
+
+  /* ---------- background grid / atmosphere ---------- */
+  .bg-grid{
+    position:fixed; inset:0; z-index:0; pointer-events:none;
+    background-image:
+      linear-gradient(var(--line-soft) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
+    background-size:64px 64px;
+    -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 10%, transparent 75%);
+    mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 10%, transparent 75%);
+    opacity:.5;
+  }
+  .bg-vignette{
+    position:fixed; inset:0; z-index:0; pointer-events:none;
+    background: radial-gradient(ellipse 60% 45% at 50% 8%, rgba(111,240,196,.06), transparent 60%);
+  }
+
+  /* ---------- status bar ---------- */
+  .statusbar{
+    position:sticky; top:0; z-index:50;
+    display:flex; align-items:center; justify-content:space-between;
+    gap:16px;
+    padding:10px 22px;
+    background:rgba(5,7,10,.82);
+    backdrop-filter: blur(10px);
+    border-bottom:1px solid var(--line);
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:.06em;
+    color:var(--text-dim);
+  }
+  .statusbar-left, .statusbar-right{ display:flex; align-items:center; gap:18px; }
+  .statusbar .dot{
+    width:6px; height:6px; border-radius:50%; background:var(--accent);
+    box-shadow:0 0 0 0 var(--accent-glow);
+    animation: ping 2.4s cubic-bezier(.2,.7,.3,1) infinite;
+    flex:none;
+  }
+  @keyframes ping{
+    0%{ box-shadow:0 0 0 0 var(--accent-glow); }
+    70%{ box-shadow:0 0 0 6px rgba(111,240,196,0); }
+    100%{ box-shadow:0 0 0 0 rgba(111,240,196,0); }
+  }
+  .statusbar-item{ display:flex; align-items:center; gap:7px; white-space:nowrap; }
+  .statusbar-item strong{ color:var(--text); font-weight:600; }
+  .statusbar .sep{ width:1px; height:12px; background:var(--line); display:inline-block; }
+  #clock{ color:var(--accent); }
+  .statusbar-brand{ color:var(--text); font-weight:600; letter-spacing:.14em; }
+
+  @media (max-width: 760px){
+    .statusbar-item.hide-sm{ display:none; }
+  }
+
+  /* ---------- side progress rail ---------- */
+  .rail{
+    position:fixed; right:26px; top:50%; transform:translateY(-50%);
+    z-index:40; display:flex; flex-direction:column; gap:16px;
+  }
+  .rail a{
+    display:flex; align-items:center; gap:8px;
+    text-decoration:none; justify-content:flex-end;
+  }
+  .rail .rail-dot{
+    width:7px; height:7px; border-radius:50%;
+    background:var(--line);
+    border:1px solid var(--text-faint);
+    transition:.25s ease;
+  }
+  .rail .rail-label{
+    font-family:var(--mono); font-size:10px; letter-spacing:.08em;
+    color:var(--text-faint); opacity:0; transform:translateX(6px);
+    transition:.25s ease; white-space:nowrap;
+  }
+  .rail a:hover .rail-label{ opacity:1; transform:translateX(0); color:var(--text-dim); }
+  .rail a.active .rail-dot{ background:var(--accent); border-color:var(--accent); box-shadow:0 0 8px var(--accent-glow); }
+  .rail a.active .rail-label{ opacity:1; transform:translateX(0); color:var(--accent); }
+  @media (max-width: 980px){ .rail{ display:none; } }
+
+  /* ---------- shared layout ---------- */
+  .wrap{ max-width:1180px; margin:0 auto; padding:0 28px; position:relative; z-index:1; }
+  section{ position:relative; z-index:1; }
+
+  .eyebrow{
+    font-family:var(--mono); font-size:11px; letter-spacing:.18em;
+    color:var(--accent); text-transform:uppercase;
+    display:flex; align-items:center; gap:10px; margin-bottom:18px;
+  }
+  .eyebrow::before{
+    content:''; width:22px; height:1px; background:var(--accent);
+  }
+
+  h2.section-title{
+    font-family:var(--display); font-weight:600;
+    font-size:clamp(28px, 3.4vw, 42px);
+    letter-spacing:-.01em;
+    margin-bottom:10px;
+  }
+  .section-lede{
+    color:var(--text-dim); max-width:640px; font-size:15.5px; margin-bottom:46px;
+  }
+
+  .reveal{ opacity:0; transform:translateY(18px); transition:opacity .7s ease, transform .7s ease; }
+  .reveal.in{ opacity:1; transform:translateY(0); }
+
+  /* ---------- hero ---------- */
+  .hero{
+    padding:120px 0 100px;
+    display:grid;
+    grid-template-columns: 1.1fr .9fr;
+    gap:40px;
+    align-items:center;
+    min-height:92vh;
+  }
+  @media (max-width:900px){ .hero{ grid-template-columns:1fr; padding-top:90px; min-height:auto;} }
+
+  .hero h1{
+    font-family:var(--display); font-weight:700;
+    font-size:clamp(46px, 7.4vw, 92px);
+    line-height:.96; letter-spacing:-.02em;
+    margin:14px 0 22px;
+  }
+  .hero h1 .accent{ color:var(--accent); }
+  .hero p.lede{
+    font-size:17px; color:var(--text-dim); max-width:520px; margin-bottom:36px;
+  }
+  .hero p.lede strong{ color:var(--text); font-weight:600; }
+
+  .stat-strip{
+    display:grid; grid-template-columns:repeat(4,1fr); gap:0;
+    border:1px solid var(--line); border-radius:10px; overflow:hidden;
+  }
+  .stat{
+    padding:16px 14px; border-right:1px solid var(--line);
+    background:var(--panel);
+  }
+  .stat:last-child{ border-right:none; }
+  .stat .stat-value{
+    font-family:var(--mono); font-weight:600; font-size:19px; color:var(--accent);
+  }
+  .stat .stat-label{
+    font-size:10.5px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.08em; margin-top:5px;
+  }
+  @media (max-width:680px){ .stat-strip{ grid-template-columns:repeat(2,1fr);} .stat:nth-child(2){border-right:none;} }
+
+  /* orbit visual */
+  .orbit-wrap{ position:relative; display:flex; align-items:center; justify-content:center; }
+  .orbit-svg{ width:100%; max-width:460px; height:auto; overflow:visible; }
+  .orbit-path{ fill:none; stroke:var(--line); stroke-width:1; }
+  .orbit-path.active{ stroke:rgba(111,240,196,.28); stroke-dasharray:3 5; }
+  .orbit-core{ fill:var(--panel-2); stroke:var(--line); stroke-width:1; }
+  .orbit-core-dot{ fill:var(--accent); }
+  .sat{ fill:var(--accent); filter:drop-shadow(0 0 6px var(--accent-glow)); }
+  .sat-alert{ fill:var(--risk-critical); filter:drop-shadow(0 0 6px rgba(251,69,112,.6)); }
+
+  .scroll-cue{
+    position:absolute; bottom:26px; left:28px;
+    font-family:var(--mono); font-size:10px; color:var(--text-faint);
+    letter-spacing:.1em; display:flex; align-items:center; gap:8px;
+  }
+  .scroll-cue .line{ width:1px; height:26px; background:linear-gradient(var(--text-faint), transparent); animation:scrolldown 1.8s ease-in-out infinite; }
+  @keyframes scrolldown{ 0%{ opacity:0; transform:translateY(-4px);} 50%{opacity:1;} 100%{opacity:0; transform:translateY(10px);} }
+
+  /* ---------- pipeline ---------- */
+  .pipeline{ padding:110px 0; }
+  .pipeline-flow{
+    display:grid; grid-template-columns:repeat(7,1fr); gap:0;
+    border:1px solid var(--line); border-radius:12px; overflow:hidden;
+  }
+  .pipeline-step{
+    padding:22px 16px; border-right:1px solid var(--line);
+    background:var(--panel); position:relative; min-height:150px;
+    display:flex; flex-direction:column; justify-content:space-between;
+  }
+  .pipeline-step:last-child{ border-right:none; }
+  .pipeline-step .pnum{ font-family:var(--mono); font-size:11px; color:var(--accent); }
+  .pipeline-step .ptitle{ font-family:var(--display); font-weight:600; font-size:15px; margin:10px 0 6px; }
+  .pipeline-step .pdesc{ font-size:11.5px; color:var(--text-dim); line-height:1.5; }
+  .pipeline-step::after{
+    content:'›'; position:absolute; right:-2px; top:50%; transform:translateY(-50%);
+    color:var(--text-faint); font-size:14px; z-index:2;
+  }
+  .pipeline-step:last-child::after{ display:none; }
+  @media (max-width:980px){
+    .pipeline-flow{ grid-template-columns:repeat(2,1fr); }
+    .pipeline-step{ border-right:none; border-bottom:1px solid var(--line); min-height:auto;}
+    .pipeline-step::after{ display:none; }
+  }
+
+  .flow-note{
+    margin-top:26px; padding:18px 20px; border:1px solid var(--line); border-radius:10px;
+    background:var(--panel); font-family:var(--mono); font-size:12px; color:var(--text-dim);
+    display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center;
+  }
+  .flow-note .arrow{ color:var(--text-faint); }
+  .flow-note .node{ color:var(--accent); }
+
+  /* ---------- architecture ---------- */
+  .architecture{ padding:110px 0; }
+  .arch-grid{ display:grid; grid-template-columns:1.15fr .85fr; gap:24px; }
+  @media (max-width:900px){ .arch-grid{ grid-template-columns:1fr; } }
+
+  .tree-card, .meta-card{
+    border:1px solid var(--line); border-radius:12px; background:var(--panel);
+    overflow:hidden;
+  }
+  .card-head{
+    padding:14px 18px; border-bottom:1px solid var(--line);
+    font-family:var(--mono); font-size:11px; letter-spacing:.08em; color:var(--text-faint);
+    text-transform:uppercase; display:flex; justify-content:space-between; align-items:center;
+  }
+  .tree{
+    font-family:var(--mono); font-size:12.5px; line-height:2; padding:18px 22px;
+    color:var(--text-dim); overflow-x:auto; white-space:pre;
+  }
+  .tree .dir{ color:var(--text); }
+  .tree .comment{ color:var(--text-faint); }
+  .tree .hl{ color:var(--accent); }
+
+  .meta-list{ padding:6px 0; }
+  .meta-item{
+    padding:16px 18px; border-bottom:1px solid var(--line-soft);
+    display:flex; gap:14px;
+  }
+  .meta-item:last-child{ border-bottom:none; }
+  .meta-tag{
+    font-family:var(--mono); font-size:10px; color:var(--accent);
+    background:var(--accent-dim); border-radius:5px; padding:3px 7px;
+    height:fit-content; white-space:nowrap;
+  }
+  .meta-item p{ font-size:13px; color:var(--text-dim); }
+  .meta-item p strong{ color:var(--text); font-weight:600; }
+
+  /* ---------- generic module grids ---------- */
+  .module-section{ padding:110px 0; }
+  .chip-row{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:52px; }
+  .chip{
+    font-family:var(--mono); font-size:11.5px; color:var(--text-dim);
+    border:1px solid var(--line); background:var(--panel);
+    padding:6px 12px; border-radius:100px;
+  }
+  .chip strong{ color:var(--accent); font-weight:600; }
+
+  .subhead{
+    font-family:var(--display); font-size:14px; font-weight:600;
+    text-transform:uppercase; letter-spacing:.08em; color:var(--text-dim);
+    margin:0 0 20px; padding-top:8px; display:flex; align-items:center; gap:10px;
+  }
+  .subhead::before{ content:''; width:16px; height:1px; background:var(--text-faint); }
+
+  .card-grid{
+    display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:56px;
+  }
+  @media (max-width:980px){ .card-grid{ grid-template-columns:repeat(2,1fr);} }
+  @media (max-width:640px){ .card-grid{ grid-template-columns:1fr;} }
+
+  .module-card{
+    border:1px solid var(--line); border-radius:12px; background:var(--panel);
+    padding:20px; transition:border-color .25s ease, transform .25s ease, background .25s ease;
+  }
+  .module-card:hover{ border-color:rgba(111,240,196,.4); transform:translateY(-3px); background:var(--panel-2); }
+  .module-card .mtitle{
+    font-family:var(--mono); font-weight:600; font-size:14px; color:var(--text); margin-bottom:8px;
+    display:flex; align-items:center; gap:8px;
+  }
+  .module-card .mtitle::before{ content:'◆'; color:var(--accent); font-size:9px; }
+  .module-card .mdesc{ font-size:12.5px; color:var(--text-dim); margin-bottom:12px; line-height:1.55; }
+  .module-card .mfields{ display:flex; flex-wrap:wrap; gap:6px; }
+  .module-card .mfield{
+    font-family:var(--mono); font-size:10px; color:var(--text-faint);
+    border:1px solid var(--line-soft); padding:2px 7px; border-radius:5px;
+  }
+
+  /* constants table */
+  .const-table{
+    width:100%; border-collapse:collapse; font-family:var(--mono); font-size:12px;
+    border:1px solid var(--line); border-radius:12px; overflow:hidden;
+  }
+  .const-table th{
+    text-align:left; padding:12px 16px; background:var(--panel-2);
+    color:var(--text-faint); font-weight:500; letter-spacing:.06em; text-transform:uppercase; font-size:10.5px;
+    border-bottom:1px solid var(--line);
+  }
+  .const-table td{ padding:11px 16px; border-bottom:1px solid var(--line-soft); color:var(--text-dim); }
+  .const-table tr:last-child td{ border-bottom:none; }
+  .const-table td.key{ color:var(--accent); }
+  .const-table td.val{ color:var(--text); }
+  .const-wrap{ overflow-x:auto; margin-bottom:20px; }
+
+  /* two-column list for frontend pages */
+  .split-list{ display:grid; grid-template-columns:1fr 1fr; gap:40px; }
+  @media (max-width:760px){ .split-list{ grid-template-columns:1fr; } }
+  .plist{ list-style:none; }
+  .plist li{
+    padding:13px 0; border-bottom:1px solid var(--line-soft);
+    display:flex; justify-content:space-between; gap:16px; font-size:13.5px;
+  }
+  .plist li .pname{ font-family:var(--mono); color:var(--text); font-weight:500; }
+  .plist li .pdesc{ color:var(--text-faint); text-align:right; font-size:12px; max-width:220px; }
+  .plist.legacy .pname{ color:var(--text-faint); text-decoration:line-through; text-decoration-color:var(--line); }
+
+  /* ---------- API table ---------- */
+  .api-section{ padding:110px 0; }
+  .api-terminal{
+    border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--panel);
+  }
+  .api-scroll{ overflow-x:auto; }
+  table.api-table{ width:100%; border-collapse:collapse; min-width:760px; }
+  table.api-table th{
+    font-family:var(--mono); text-transform:uppercase; letter-spacing:.06em;
+    font-size:10px; color:var(--text-faint); text-align:left; padding:12px 18px;
+    border-bottom:1px solid var(--line); background:var(--panel-2); position:sticky; top:0;
+  }
+  table.api-table td{
+    padding:10px 18px; font-family:var(--mono); font-size:12px; color:var(--text-dim);
+    border-bottom:1px solid var(--line-soft);
+  }
+  table.api-table tr:hover td{ background:rgba(111,240,196,.03); }
+  .method{
+    font-weight:700; font-size:10.5px; padding:2px 8px; border-radius:5px;
+    letter-spacing:.04em;
+  }
+  .method.get{ color:#6ff0c4; background:rgba(111,240,196,.1); }
+  .method.post{ color:#fbbf24; background:rgba(251,191,36,.1); }
+  .auth-badge{
+    font-size:10px; padding:2px 7px; border-radius:100px; border:1px solid var(--line);
+  }
+  .auth-badge.yes{ color:var(--text-dim); }
+  .auth-badge.role{ color:var(--risk-critical); border-color:rgba(251,69,112,.3); }
+  .auth-badge.no{ color:var(--text-faint); }
+  .path{ color:var(--text); }
+
+  /* ---------- decisions ---------- */
+  .decisions{ padding:110px 0 120px; }
+  .decision-list{ counter-reset: dec; }
+  .decision{
+    display:grid; grid-template-columns:70px 1fr; gap:20px;
+    padding:26px 0; border-bottom:1px solid var(--line-soft);
+  }
+  .decision:first-child{ padding-top:0; }
+  .decision .dnum{
+    font-family:var(--mono); font-size:26px; font-weight:600; color:var(--line);
+    transition:color .3s ease;
+  }
+  .decision:hover .dnum{ color:var(--accent); }
+  .decision .dtext{ font-size:15px; color:var(--text-dim); padding-top:4px; }
+  .decision .dtext strong{ color:var(--text); font-weight:600; }
+
+  /* ---------- footer ---------- */
+  footer{
+    border-top:1px solid var(--line); padding:50px 0 40px;
+    font-family:var(--mono); font-size:11px; color:var(--text-faint);
+  }
+  footer .footer-row{
+    display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;
+  }
+  .prototype-note{
+    display:inline-flex; align-items:center; gap:8px; margin-bottom:18px;
+    color:var(--text-dim); font-size:11.5px; border:1px solid var(--line);
+    padding:7px 12px; border-radius:100px; background:var(--panel);
+  }
+  .prototype-note::before{ content:'⚠'; color:var(--risk-moderate); }
+</style>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+<div class="bg-vignette"></div>
+
+<header class="statusbar">
+  <div class="statusbar-left">
+    <span class="dot"></span>
+    <span class="statusbar-brand">ORBITGUARD // ANALYSIS</span>
+    <span class="sep hide-sm"></span>
+    <span class="statusbar-item hide-sm">SYSTEM <strong>OPERATIONAL</strong></span>
+    <span class="sep hide-sm"></span>
+    <span class="statusbar-item hide-sm">SOURCE <strong>CELESTRAK · SGP4</strong></span>
+  </div>
+  <div class="statusbar-right">
+    <span class="statusbar-item">MODEL <strong>v1.0.0-prototype</strong></span>
+    <span class="sep"></span>
+    <span id="clock" class="statusbar-item">--:--:-- UTC</span>
+  </div>
+</header>
+
+<nav class="rail" id="rail">
+  <a href="#hero" data-label="Overview"><span class="rail-label">OVERVIEW</span><span class="rail-dot"></span></a>
+  <a href="#pipeline" data-label="Pipeline"><span class="rail-label">PIPELINE</span><span class="rail-dot"></span></a>
+  <a href="#architecture" data-label="Architecture"><span class="rail-label">ARCHITECTURE</span><span class="rail-dot"></span></a>
+  <a href="#backend" data-label="Backend"><span class="rail-label">BACKEND</span><span class="rail-dot"></span></a>
+  <a href="#frontend" data-label="Frontend"><span class="rail-label">FRONTEND</span><span class="rail-dot"></span></a>
+  <a href="#api" data-label="API"><span class="rail-label">API</span><span class="rail-dot"></span></a>
+  <a href="#decisions" data-label="Decisions"><span class="rail-label">DECISIONS</span><span class="rail-dot"></span></a>
+</nav>
+
+<!-- ============ HERO ============ -->
+<section id="hero" class="wrap hero">
+  <div class="reveal in">
+    <div class="eyebrow">Codebase Analysis · Space Situational Awareness</div>
+    <h1>ORBIT<span class="accent">GUARD</span></h1>
+    <p class="lede">
+      A collision-avoidance prototype that ingests public orbital data, propagates satellite
+      trajectories with <strong>SGP4/SDP4</strong>, detects close approaches, estimates collision
+      probability by Monte Carlo, and recommends minimum-Δv evasive maneuvers — surfaced through
+      a <strong>React + CesiumJS</strong> mission-control dashboard.
+    </p>
+    <div class="stat-strip">
+      <div class="stat"><div class="stat-value">500</div><div class="stat-label">Tracked objects cap</div></div>
+      <div class="stat"><div class="stat-value">48h</div><div class="stat-label">Scan horizon</div></div>
+      <div class="stat"><div class="stat-value">100K</div><div class="stat-label">Monte Carlo samples</div></div>
+      <div class="stat"><div class="stat-value">20m</div><div class="stat-label">Hard-body radius</div></div>
+    </div>
+  </div>
+
+  <div class="orbit-wrap reveal in">
+    <svg class="orbit-svg" viewBox="0 0 460 460">
+      <ellipse class="orbit-path" cx="230" cy="230" rx="190" ry="90"/>
+      <ellipse class="orbit-path active" cx="230" cy="230" rx="140" ry="140"/>
+      <ellipse class="orbit-path" cx="230" cy="230" rx="90" ry="190"/>
+      <circle class="orbit-core" cx="230" cy="230" r="34"/>
+      <circle class="orbit-core-dot" cx="230" cy="230" r="4"/>
+      <!-- protected asset traveling the circular orbit -->
+      <circle class="sat" r="5">
+        <animateMotion dur="7s" repeatCount="indefinite"
+          path="M 230 90 A 140 140 0 1 1 229.9 90"/>
+      </circle>
+      <!-- approaching debris traveling the elliptical orbit -->
+      <!-- approaching debris orbit -->
+      <path
+        id="debris-orbit"
+        class="orbit-path"
+        d="
+          M 40 230
+          A 190 90 0 1 1 420 230
+          A 190 90 0 1 1 40 230
+        "
+      />
+
+      <!-- approaching debris -->
+      <circle class="sat-alert" r="4">
+        <animateMotion
+          dur="6.2s"
+          repeatCount="indefinite"
+          path="
+            M 40 230
+            A 190 90 0 1 1 420 230
+            A 190 90 0 1 1 40 230
+          "
+        />
+      </circle>
+    </svg>
+  </div>
+
+  <div class="scroll-cue"><span class="line"></span> SCROLL</div>
+</section>
+
+<!-- ============ PIPELINE ============ -->
+<section id="pipeline" class="wrap pipeline">
+  <div class="eyebrow reveal">Data Flow</div>
+  <h2 class="section-title reveal">One pipeline, ingest to recommendation</h2>
+  <p class="section-lede reveal">Every conjunction on the dashboard passes through the same seven stages — deterministic, reproducible, and fully audited at each step.</p>
+
+  <div class="pipeline-flow reveal">
+    <div class="pipeline-step"><div class="pnum">01</div><div class="ptitle">Ingest</div><div class="pdesc">celestrakService pulls 3LE TLE sets from CelesTrak's public GP API.</div></div>
+    <div class="pipeline-step"><div class="pnum">02</div><div class="ptitle">Filter &amp; Seed</div><div class="pdesc">seedService keeps LEO objects (perigee &lt; 2000km), caps at 500, persists to MongoDB.</div></div>
+    <div class="pipeline-step"><div class="pnum">03</div><div class="ptitle">Propagate</div><div class="pdesc">propagationService runs SGP4/SDP4 to produce ECI/ECEF state vectors over time.</div></div>
+    <div class="pipeline-step"><div class="pnum">04</div><div class="ptitle">Detect</div><div class="pdesc">conjunctionService screens all objects within 100km and refines TCA via parabolic fit.</div></div>
+    <div class="pipeline-step"><div class="pnum">05</div><div class="ptitle">Estimate</div><div class="pdesc">riskService runs a 2-D B-plane Monte Carlo model to compute collision probability.</div></div>
+    <div class="pipeline-step"><div class="pnum">06</div><div class="ptitle">Optimize</div><div class="pdesc">maneuverService tests candidate Δv burns with a J2/RK4 integrator, picks the safest, smallest.</div></div>
+    <div class="pipeline-step"><div class="pnum">07</div><div class="ptitle">Visualize</div><div class="pdesc">CesiumGlobe renders before/after trajectories on a 3D globe for the operator.</div></div>
+  </div>
+
+  <div class="flow-note reveal">
+    <span class="node">CelesTrak API</span><span class="arrow">→</span>
+    <span class="node">celestrakService</span><span class="arrow">→</span>
+    <span class="node">seedService</span><span class="arrow">→</span>
+    <span class="node">MongoDB</span><span class="arrow">→</span>
+    <span class="node">Express REST API</span><span class="arrow">→</span>
+    <span class="node">React Query</span><span class="arrow">→</span>
+    <span class="node">CesiumGlobe</span>
+  </div>
+</section>
+
+<!-- ============ ARCHITECTURE ============ -->
+<section id="architecture" class="wrap architecture">
+  <div class="eyebrow reveal">Root Structure</div>
+  <h2 class="section-title reveal">A monorepo, and the tooling around it</h2>
+  <p class="section-lede reveal">npm workspaces bind backend and frontend under one root. Alongside the app, three separate AI-agent skill directories drive an OpenSpec-based change workflow.</p>
+
+  <div class="arch-grid">
+    <div class="tree-card reveal">
+      <div class="card-head"><span>orbitguard/</span><span>root</span></div>
+      <div class="tree"><span class="dir">.agent/</span>              <span class="comment"># Freebuff/Codex agent skills</span>
+<span class="dir">.agents/</span>             <span class="comment"># OpenSpec skills → targets Codex</span>
+<span class="dir">.claude/</span>             <span class="comment"># Claude CLI /opsx commands</span>
+<span class="dir">backend/</span>             <span class="hl">Express + MongoDB API</span>
+<span class="dir">frontend/</span>            <span class="hl">React + Vite + Cesium</span>
+<span class="dir">docs/</span>                <span class="comment"># product engineering pack</span>
+<span class="dir">openspec/</span>            <span class="comment"># change mgmt (empty)</span>
+package.json         <span class="comment"># npm workspaces root</span>
+README.md
+OrbitGuard — Product &amp; UI-UX Design Doc.md
+OrbitGuard — Technology Stack Doc.md
+Product Requirements Document.md</div>
+    </div>
+
+    <div class="meta-card reveal">
+      <div class="card-head"><span>Agent Tooling</span><span>.gitignored</span></div>
+      <div class="meta-list">
+        <div class="meta-item">
+          <span class="meta-tag">SKILLS</span>
+          <p><strong>.agent/</strong> — six OpenSpec workflows (propose → explore → apply → sync → update → archive) written as detailed agent prompts.</p>
+        </div>
+        <div class="meta-item">
+          <span class="meta-tag">CODEX</span>
+          <p><strong>.agents/</strong> — the same OpenSpec skill set, reformatted for the Codex runtime via a <code>.openspec-target</code> marker.</p>
+        </div>
+        <div class="meta-item">
+          <span class="meta-tag">CLI</span>
+          <p><strong>.claude/</strong> — mirrors the workflows as Claude CLI slash-commands, e.g. <code>/opsx-apply</code>.</p>
+        </div>
+        <div class="meta-item">
+          <span class="meta-tag">DOCS</span>
+          <p><strong>docs/orbitguard/</strong> — 7-document engineering pack, opening with a 40+ issue weak-points audit that drove the current build.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ BACKEND ============ -->
+<section id="backend" class="wrap module-section">
+  <div class="eyebrow reveal">Backend</div>
+  <h2 class="section-title reveal">Express, MongoDB, and orbital mechanics</h2>
+  <p class="section-lede reveal">Pure ESM JavaScript. Ingestion, propagation, conjunction screening, Monte Carlo risk, and maneuver optimization each live in their own service.</p>
+
+  <div class="chip-row reveal">
+    <span class="chip"><strong>express</strong> · HTTP framework</span>
+    <span class="chip"><strong>mongoose</strong> · MongoDB ODM</span>
+    <span class="chip"><strong>satellite.js</strong> · SGP4/SDP4</span>
+    <span class="chip"><strong>mongodb-memory-server</strong> · zero-setup demo DB</span>
+    <span class="chip"><strong>zod</strong> · validation</span>
+    <span class="chip"><strong>helmet</strong> · security headers</span>
+    <span class="chip"><strong>express-rate-limit</strong> · 500 req / 15 min</span>
+    <span class="chip"><strong>vitest</strong> · test runner</span>
+  </div>
+
+  <h3 class="subhead reveal">Data Models</h3>
+  <div class="card-grid reveal">
+    <div class="module-card">
+      <div class="mtitle">OrbitalObject</div>
+      <div class="mdesc">Every tracked space object — TLE, derived elements, source provenance, and a freshness clock.</div>
+      <div class="mfields"><span class="mfield">noradId</span><span class="mfield">tle.line1/2</span><span class="mfield">orbitalData</span><span class="mfield">freshness</span><span class="mfield">tenantId</span></div>
+    </div>
+    <div class="module-card">
+      <div class="mtitle">ProtectedAsset</div>
+      <div class="mdesc">Satellites under active protection. ISS (NORAD 25544) is the default, priority CRITICAL.</div>
+      <div class="mfields"><span class="mfield">noradId</span><span class="mfield">priority</span><span class="mfield">protected</span></div>
+    </div>
+    <div class="module-card">
+      <div class="mtitle">Conjunction</div>
+      <div class="mdesc">A close-approach event: miss distance, relative velocity, estimated Pc, risk level, uncertainty sigmas.</div>
+      <div class="mfields"><span class="mfield">tca</span><span class="mfield">missDistanceKm</span><span class="mfield">estimatedPc</span><span class="mfield">riskLevel</span><span class="mfield">provenance</span></div>
+    </div>
+    <div class="module-card">
+      <div class="mtitle">ConjunctionAnalysis</div>
+      <div class="mdesc">Immutable snapshot of every analysis rerun — full input/output provenance for audit and reproducibility.</div>
+      <div class="mfields"><span class="mfield">tleSnapshot</span><span class="mfield">params</span><span class="mfield">results</span><span class="mfield">timing</span></div>
+    </div>
+    <div class="module-card">
+      <div class="mtitle">Maneuver</div>
+      <div class="mdesc">A candidate evasive burn — direction, magnitude, resulting TCA, miss distance, and safety margin.</div>
+      <div class="mfields"><span class="mfield">deltaVMs</span><span class="mfield">newEstimatedPc</span><span class="mfield">safe</span><span class="mfield">recommended</span></div>
+    </div>
+    <div class="module-card">
+      <div class="mtitle">Job</div>
+      <div class="mdesc">Async computation tracking for analysis and maneuver generation, with staged progress.</div>
+      <div class="mfields"><span class="mfield">type</span><span class="mfield">status</span><span class="mfield">progress</span><span class="mfield">resultRef</span></div>
+    </div>
+  </div>
+
+  <h3 class="subhead reveal">Core Services</h3>
+  <div class="card-grid reveal">
+    <div class="module-card">
+      <div class="mtitle">celestrakService</div>
+      <div class="mdesc">Fetches and parses TLE sets from CelesTrak, inferring object type from naming convention.</div>
+    </div>
+    <div class="module-card">
+      <div class="mtitle">seedService</div>
+      <div class="mdesc">Orchestrates the full ingest → filter → persist → scan → store pipeline end to end.</div>
+    </div>
+    <div class="module-card">
+      <div class="mtitle">demoService</div>
+      <div class="mdesc">Synthesizes a physically consistent debris object guaranteed to pass ~0.7km from the ISS.</div>
+    </div>
+    <div class="module-card">
+      <div class="mtitle">propagationService</div>
+      <div class="mdesc">SGP4/SDP4 wrapper: TLE parsing, ECI/ECEF propagation, trajectory sampling.</div>
+    </div>
+    <div class="module-card">
+      <div class="mtitle">conjunctionService</div>
+      <div class="mdesc">Screens close approaches within 100km and refines TCA with parabolic three-point fitting.</div>
+    </div>
+    <div class="module-card">
+      <div class="mtitle">riskService</div>
+      <div class="mdesc">2-D B-plane Gaussian Monte Carlo collision-probability model, seeded for reproducibility.</div>
+    </div>
+    <div class="module-card">
+      <div class="mtitle">maneuverService</div>
+      <div class="mdesc">J2/RK4 numerical propagator plus candidate-burn generation and safety optimization.</div>
+    </div>
+    <div class="module-card">
+      <div class="mtitle">jobQueue</div>
+      <div class="mdesc">Single-threaded, in-process queue that runs analysis and maneuver jobs without blocking HTTP.</div>
+    </div>
+    <div class="module-card">
+      <div class="mtitle">auth middleware</div>
+      <div class="mdesc">Demo mode injects an OPERATOR user automatically; production mode parses bearer tokens.</div>
+    </div>
+  </div>
+
+  <h3 class="subhead reveal">Key Constants</h3>
+  <div class="const-wrap reveal">
+    <table class="const-table">
+      <thead><tr><th>Constant</th><th>Value</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td class="key">SCAN_HORIZON_HOURS</td><td class="val">48</td><td>Conjunction scan window</td></tr>
+        <tr><td class="key">SCREENING_DISTANCE_KM</td><td class="val">100</td><td>Close-approach threshold</td></tr>
+        <tr><td class="key">MONTE_CARLO_SAMPLES</td><td class="val">100,000</td><td>Default sample count</td></tr>
+        <tr><td class="key">HARD_BODY_RADIUS_KM</td><td class="val">0.020</td><td>Combined 20m hard-body radius</td></tr>
+        <tr><td class="key">SAFE_PC</td><td class="val">1e-5</td><td>Safety threshold for maneuvers</td></tr>
+        <tr><td class="key">MANEUVER_CANDIDATES_MS</td><td class="val">±0.05 / ±0.10 / ±0.20</td><td>Candidate burn magnitudes</td></tr>
+        <tr><td class="key">DEFAULT_PROTECTED_ASSET</td><td class="val">NORAD 25544</td><td>ISS</td></tr>
+        <tr><td class="key">LEO_MAX_ALTITUDE_KM</td><td class="val">2000</td><td>LEO filter threshold</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ FRONTEND ============ -->
+<section id="frontend" class="wrap module-section">
+  <div class="eyebrow reveal">Frontend</div>
+  <h2 class="section-title reveal">Mission control, rendered</h2>
+  <p class="section-lede reveal">React 19 with React Query for server state and CesiumJS for the 3D globe — dark, data-dense, built for an operator scanning for risk.</p>
+
+  <div class="chip-row reveal">
+    <span class="chip"><strong>react 19.1</strong></span>
+    <span class="chip"><strong>react-router-dom 7.6</strong></span>
+    <span class="chip"><strong>@tanstack/react-query 5.101</strong></span>
+    <span class="chip"><strong>cesium 1.131</strong></span>
+    <span class="chip"><strong>tailwindcss 4.1</strong></span>
+    <span class="chip"><strong>motion</strong> (Framer Motion)</span>
+    <span class="chip"><strong>vite 6.3</strong></span>
+  </div>
+
+  <div class="split-list reveal">
+    <div>
+      <h3 class="subhead">Current Workflow Pages</h3>
+      <ul class="plist">
+        <li><span class="pname">Landing</span><span class="pdesc">Hero globe, pipeline, capability pitch</span></li>
+        <li><span class="pname">Dashboard</span><span class="pdesc">Metrics, globe, priority alert rail</span></li>
+        <li><span class="pname">ConjunctionsList</span><span class="pdesc">Filterable event table</span></li>
+        <li><span class="pname">ConjunctionWorkspacePage</span><span class="pdesc">Geometry / provenance / history tabs</span></li>
+        <li><span class="pname">ManeuverWorkspacePage</span><span class="pdesc">Candidate burns + before/after globe</span></li>
+        <li><span class="pname">ObjectExplorerPage</span><span class="pdesc">Search, orbital elements, full TLE</span></li>
+        <li><span class="pname">SettingsPage</span><span class="pdesc">Read-only risk threshold reference</span></li>
+      </ul>
+    </div>
+    <div>
+      <h3 class="subhead">Superseded / Legacy Pages</h3>
+      <ul class="plist legacy">
+        <li><span class="pname">ObjectsPage</span><span class="pdesc">Simple table, replaced by Explorer</span></li>
+        <li><span class="pname">ConjunctionAnalysis</span><span class="pdesc">Older analysis view</span></li>
+        <li><span class="pname">ManeuverAnalysis</span><span class="pdesc">Older maneuver comparison view</span></li>
+      </ul>
+      <h3 class="subhead" style="margin-top:34px;">Signature Components</h3>
+      <ul class="plist">
+        <li><span class="pname">CesiumGlobe</span><span class="pdesc">Polylines, points, markers, animated sats</span></li>
+        <li><span class="pname">CommandPalette</span><span class="pdesc">⌘K search across objects &amp; conjunctions</span></li>
+        <li><span class="pname">RiskBadge</span><span class="pdesc">Color-coded LOW → CRITICAL indicator</span></li>
+        <li><span class="pname">SystemStatusBar</span><span class="pdesc">Live UTC clock, data freshness</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ API ============ -->
+<section id="api" class="wrap api-section">
+  <div class="eyebrow reveal">Contract</div>
+  <h2 class="section-title reveal">The complete API surface</h2>
+  <p class="section-lede reveal">Every route is mounted twice — under <code>/api/v1</code> and again as a legacy alias under <code>/api</code> — for backward compatibility.</p>
+
+  <div class="api-terminal reveal">
+    <div class="api-scroll">
+      <table class="api-table">
+        <thead><tr><th>Method</th><th>Path</th><th>Auth</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><span class="method get">GET</span></td><td class="path">/api/v1/dashboard/overview</td><td><span class="auth-badge yes">operator</span></td><td>Dashboard metrics &amp; alerts</td></tr>
+          <tr><td><span class="method get">GET</span></td><td class="path">/api/v1/objects</td><td><span class="auth-badge yes">operator</span></td><td>Paginated object list</td></tr>
+          <tr><td><span class="method get">GET</span></td><td class="path">/api/v1/objects/positions</td><td><span class="auth-badge yes">operator</span></td><td>Current ECEF positions</td></tr>
+          <tr><td><span class="method get">GET</span></td><td class="path">/api/v1/objects/:id/trajectory</td><td><span class="auth-badge yes">operator</span></td><td>Propagated trajectory</td></tr>
+          <tr><td><span class="method get">GET</span></td><td class="path">/api/v1/conjunctions</td><td><span class="auth-badge yes">operator</span></td><td>List conjunction events</td></tr>
+          <tr><td><span class="method get">GET</span></td><td class="path">/api/v1/conjunctions/:id</td><td><span class="auth-badge yes">operator</span></td><td>Full conjunction detail</td></tr>
+          <tr><td><span class="method post">POST</span></td><td class="path">/api/v1/conjunctions/:id/analyze</td><td><span class="auth-badge role">operator+</span></td><td>Enqueue analysis job</td></tr>
+          <tr><td><span class="method get">GET</span></td><td class="path">/api/v1/conjunctions/:id/trajectories</td><td><span class="auth-badge yes">operator</span></td><td>Before-maneuver trajectories</td></tr>
+          <tr><td><span class="method post">POST</span></td><td class="path">/api/v1/conjunctions/:id/maneuver-jobs</td><td><span class="auth-badge role">operator+</span></td><td>Enqueue maneuver generation</td></tr>
+          <tr><td><span class="method get">GET</span></td><td class="path">/api/v1/conjunctions/:id/maneuvers</td><td><span class="auth-badge yes">operator</span></td><td>List maneuver candidates</td></tr>
+          <tr><td><span class="method get">GET</span></td><td class="path">/api/v1/maneuvers/:id/trajectories</td><td><span class="auth-badge yes">operator</span></td><td>Before/after trajectories</td></tr>
+          <tr><td><span class="method get">GET</span></td><td class="path">/api/v1/jobs/:id</td><td><span class="auth-badge no">none</span></td><td>Job status &amp; progress</td></tr>
+          <tr><td><span class="method get">GET</span></td><td class="path">/api/v1/protected-assets</td><td><span class="auth-badge no">none</span></td><td>List protected assets</td></tr>
+          <tr><td><span class="method get">GET</span></td><td class="path">/api/health</td><td><span class="auth-badge no">none</span></td><td>Health check</td></tr>
+          <tr><td><span class="method get">GET</span></td><td class="path">/api/search?q=</td><td><span class="auth-badge yes">operator</span></td><td>Global fuzzy search</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============ DECISIONS ============ -->
+<section id="decisions" class="wrap decisions">
+  <div class="eyebrow reveal">Design Record</div>
+  <h2 class="section-title reveal">Eight decisions that shape the system</h2>
+  <p class="section-lede reveal">The choices that explain most of what the codebase looks like today.</p>
+
+  <div class="decision-list">
+    <div class="decision reveal"><div class="dnum">01</div><div class="dtext"><strong>In-memory MongoDB</strong> for a zero-setup demo — nothing to install, but data is lost on restart.</div></div>
+    <div class="decision reveal"><div class="dnum">02</div><div class="dtext"><strong>Async job queue</strong> keeps expensive analysis and maneuver-generation work off the HTTP thread.</div></div>
+    <div class="decision reveal"><div class="dnum">03</div><div class="dtext"><strong>Dual propagators</strong> — SGP4 for baseline orbit determination, J2/RK4 numerical integration for maneuver simulation.</div></div>
+    <div class="decision reveal"><div class="dnum">04</div><div class="dtext"><strong>Deterministic PRNG</strong> (mulberry32, seed 42) makes every Monte Carlo run reproducible.</div></div>
+    <div class="decision reveal"><div class="dnum">05</div><div class="dtext"><strong>Synthesized demo scenario</strong> guarantees a CRITICAL conjunction regardless of when the seed runs.</div></div>
+    <div class="decision reveal"><div class="dnum">06</div><div class="dtext"><strong>Configurable thresholds live on the backend</strong> — never hardcoded into the frontend.</div></div>
+    <div class="decision reveal"><div class="dnum">07</div><div class="dtext"><strong>Prototype disclaimers</strong> run throughout the UI and API responses, never hiding the model's maturity.</div></div>
+    <div class="decision reveal"><div class="dnum">08</div><div class="dtext"><strong>No real authentication in demo mode</strong> — an operator role is injected automatically so the flow is never blocked.</div></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span class="prototype-note">Analysis of a prototype system — not flight-certified, not for operational collision avoidance</span>
+    <div class="footer-row">
+      <span>ORBITGUARD // CODEBASE ANALYSIS</span>
+      <span>COMPILED FROM SOURCE · 40+ MODULES REVIEWED</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // live UTC clock
+  const clockEl = document.getElementById('clock');
+  function tick(){
+    const d = new Date();
+    const hh = String(d.getUTCHours()).padStart(2,'0');
+    const mm = String(d.getUTCMinutes()).padStart(2,'0');
+    const ss = String(d.getUTCSeconds()).padStart(2,'0');
+    clockEl.textContent = hh+':'+mm+':'+ss+' UTC';
+  }
+  tick();
+  setInterval(tick, 1000);
+
+  // scroll reveal
+  const revealEls = document.querySelectorAll('.reveal');
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
+    });
+  }, { threshold: 0.12 });
+  revealEls.forEach(el=>io.observe(el));
+
+  // rail active state
+  const railLinks = document.querySelectorAll('.rail a');
+  const sections = Array.from(railLinks).map(a=>document.querySelector(a.getAttribute('href')));
+  function updateRail(){
+    let idx = 0;
+    const y = window.scrollY + window.innerHeight*0.4;
+    sections.forEach((s,i)=>{ if(s && s.offsetTop <= y) idx = i; });
+    railLinks.forEach((a,i)=>a.classList.toggle('active', i===idx));
+  }
+  updateRail();
+  window.addEventListener('scroll', updateRail, { passive:true });
+</script>
+
+</body>
+</html>
